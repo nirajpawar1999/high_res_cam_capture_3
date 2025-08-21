@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hi-Res Camera Capture (Max Control, Portrait Support)</title>
+  <style>
+    :root { --bg:#0b0d10; --fg:#e8eef4; --muted:#a6b0bb; --accent:#6aa6ff; --card:#141820; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--fg); }
+    header { padding:16px 20px; border-bottom:1px solid #1e2430; position:sticky; top:0; background:rgba(11,13,16,.85); backdrop-filter: blur(6px); z-index:2; }
+    h1 { margin:0; font-size:18px; font-weight:600; }
+    main { display:grid; grid-template-columns: 380px 1fr; gap:16px; padding:16px; }
+    @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+    .card { background:var(--card); border:1px solid #1f2531; border-radius:14px; padding:12px; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    label { font-size:12px; color:var(--muted); }
+    select, input[type="number"], button { background:#0f141c; color:var(--fg); border:1px solid #273042; border-radius:10px; padding:8px 10px; font-size:13px; }
+    button { cursor:pointer; }
+    button.primary { background:var(--accent); color:#031023; border-color:transparent; font-weight:600; }
+    button.ghost { background:transparent; }
+    .grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:8px; }
+    .grid-3 { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:8px; }
+    .kv { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); }
+    .slider { display:grid; grid-template-columns: 130px 1fr 70px; gap:8px; align-items:center; }
+    input[type="range"] { width:100%; accent-color: var(--accent); }
+    .video-wrap { position:relative; }
+    video, canvas { width:100%; max-height: 78vh; background:black; border-radius:12px; }
+    .pill { font-size:11px; padding:6px 8px; border-radius:999px; background:#0f141c; color:var(--muted); border:1px solid #273042; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    details summary { cursor:pointer; user-select:none; }
+    footer { padding:12px 16px; font-size:12px; color:var(--muted); border-top:1px solid #1e2430; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Hi-Res Camera Capture — native-like quality with portrait support</h1>
+  </header>
+  <main>
+    <!-- Left controls -->
+    <section class="card" id="controls">
+      <div class="row" style="justify-content:space-between; margin-bottom:6px;">
+        <div class="pill">HTTPS on mobile • Allow camera</div>
+        <div id="status" class="pill">idle</div>
+      </div>
+
+      <div class="grid" style="margin-bottom:8px;">
+        <div>
+          <label>Camera</label>
+          <select id="deviceSelect"></select>
+        </div>
+        <div>
+          <label>Facing</label>
+          <select id="facing">
+            <option value="environment">Back / environment</option>
+            <option value="user">Front / selfie</option>
+            <option value="any" selected>Any</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-bottom:8px;">
+        <div>
+          <label>Frame rate (ideal)</label>
+          <input id="fps" type="number" min="15" max="120" step="1" value="60" />
+        </div>
+        <div>
+          <label>Resolution strategy</label>
+          <select id="try4k">
+            <option value="1" selected>Try exact 4K/hi-res first</option>
+            <option value="0">Let browser choose</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- changed from grid -> grid-3 to add Force ≥4K -->
+      <div class="grid-3" style="margin-bottom:8px;">
+        <div>
+          <label>Orientation</label>
+          <select id="orientation">
+            <option value="auto" selected>Auto</option>
+            <option value="landscape">Landscape</option>
+            <option value="portrait">Portrait / Vertical</option>
+          </select>
+        </div>
+        <div>
+          <label>Record source</label>
+          <select id="recordSource">
+            <option value="camera" selected>Camera stream</option>
+            <option value="enhanced">Enhanced preview (canvas)</option>
+          </select>
+        </div>
+        <div>
+          <label>Force ≥4K minimum</label>
+          <select id="force4k">
+            <option value="0" selected>No</option>
+            <option value="1">Yes</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row" style="margin-bottom:8px;">
+        <button id="start" class="primary">Start stream</button>
+        <button id="stop" class="ghost">Stop</button>
+        <button id="lockAEAF" class="ghost">Lock AE/AF (if supported)</button>
+        <button id="torch" class="ghost">Toggle Torch</button>
+      </div>
+
+      <details style="margin:8px 0;">
+        <summary>Advanced constraints</summary>
+        <div id="capabilities" style="margin-top:8px; display:grid; gap:8px;"></div>
+      </details>
+
+      <details style="margin:8px 0;">
+        <summary>Enhance preview (software)</summary>
+        <div class="grid-3" style="margin-top:8px;">
+          <div class="slider">
+            <label>Gamma</label>
+            <input id="gamma" type="range" min="0.5" max="3" step="0.01" value="1">
+            <span id="gammaVal" class="mono">1.00</span>
+          </div>
+          <div class="slider">
+            <label>Contrast</label>
+            <input id="contrast" type="range" min="-100" max="100" step="1" value="0">
+            <span id="contrastVal" class="mono">0</span>
+          </div>
+          <div class="slider">
+            <label>Sharpen</label>
+            <input id="sharpen" type="range" min="0" max="2" step="1" value="0">
+            <span id="sharpenVal" class="mono">0</span>
+          </div>
+        </div>
+      </details>
+
+      <div class="row" style="margin-top:8px; gap:12px;">
+        <button id="snap" class="ghost">Capture still (sensor if possible)</button>
+        <button id="rec" class="ghost">Start recording</button>
+        <a id="downloadLink" class="pill" href="#" download style="display:none;">Download</a>
+      </div>
+
+      <div style="margin-top:10px;" id="info">
+        <div class="kv"><span>Selected device:</span> <span class="mono" id="devLabel">—</span></div>
+        <div class="kv"><span>Actual video settings:</span> <span class="mono" id="settings">—</span></div>
+        <div class="kv"><span>Live FPS (camera):</span> <span class="mono" id="liveFps">—</span></div>
+      </div>
+    </section>
+
+    <!-- Right preview -->
+    <section class="card">
+      <div class="video-wrap">
+        <video id="video" playsinline muted></video>
+        <canvas id="canvas" style="display:none;"></canvas>
+      </div>
+    </section>
+  </main>
+  <footer>
+    Notes: Width x Height are literal pixel targets. Choose Orientation = Portrait to request tall sizes (e.g., 2160 x 3840 or 2160 x 4860 if supported). This page selects MP4 on Safari and WebM elsewhere, records in 1s chunks, and revokes URLs to reduce memory spikes.
+  </footer>
+
+  <script>
+    // ===== Utilities =====
+    const $ = (id) => document.getElementById(id);
+    const logStatus = (t) => { $("status").textContent = t; };
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    // Global state
+    let stream = null;
+    let track = null;
+    let imageCapture = null;
+    let recorder = null;
+    let recBlobs = [];
+    let rafId = null;
+    let rVFCActive = false;
+    let usingCanvasEnhance = false;
+    let downloadUrl = null;
+
+    // Base candidate sizes (landscape)
+    const candidateResolutionsLandscape = [
+      [7680,4320], [5120,2880], [4096,2160], [3840,2160], [2560,1440],
+      [2304,1296], [1920,1080], [1600,1200], [1600,900], [1280,960],
+      [1280,720], [1024,768], [960,540], [800,600], [640,480]
+    ];
+    // Portrait list is generated by swapping, plus a few extra-tall options
+    const extraPortrait = [
+      [2160,3840],  // UHD portrait
+      [1440,2560],
+      [1080,1920],
+      [2160,4860],  // extra-tall if device accepts it
+    ];
+
+    function getPortraitList() {
+      const swapped = candidateResolutionsLandscape.map(([w,h]) => [Math.min(w,h), Math.max(w,h)])
+        .filter(([w,h]) => h > w); // ensure tall
+      const dedup = new Map();
+      [...extraPortrait, ...swapped].forEach(([w,h]) => { dedup.set(`${w}x${h}`, [w,h]); });
+      // sort descending by area
+      return [...dedup.values()].sort((a,b) => (b[0]*b[1]) - (a[0]*a[1]));
+    }
+
+    async function enumerateCameras() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const vids = devices.filter(d => d.kind === 'videoinput');
+      const sel = $("deviceSelect");
+      sel.innerHTML = '';
+      vids.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Camera ${i+1}`;
+        sel.appendChild(opt);
+      });
+      if (!vids.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No camera found';
+        sel.appendChild(opt);
+      }
+    }
+
+    function revokeDownloadUrl() {
+      if (downloadUrl) {
+        URL.revokeObjectURL(downloadUrl);
+        downloadUrl = null;
+      }
+    }
+
+    function stopStream() {
+      // stop FPS loops first
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      rVFCActive = false;
+
+      // stop recording first to flush data while stream is alive
+      if (recorder && recorder.state !== 'inactive') {
+        try { recorder.stop(); } catch {}
+      }
+      recorder = null;
+
+      if (stream) {
+        stream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+      }
+      stream = null; track = null; imageCapture = null;
+      $("video").srcObject = null;
+      logStatus('stopped');
+    }
+
+    function buildBaseConstraints() {
+      const facing = $("facing").value;
+      const fps = parseInt($("fps").value || '60', 10);
+      const base = {
+        audio: false,
+        video: {
+          width: { ideal: 8000 },
+          height: { ideal: 8000 },
+          frameRate: { ideal: fps }, // no hard min to not block high-res cams
+          resizeMode: 'none'
+        }
+      };
+      if (facing !== 'any') base.video.facingMode = { ideal: facing };
+      const selected = $("deviceSelect")?.value;
+      if (selected) base.video.deviceId = { exact: selected };
+      return base;
+    }
+
+    async function tryExactSizes(sizes, base) {
+      for (const [w,h] of sizes) {
+        try {
+          const cons = JSON.parse(JSON.stringify(base));
+          cons.video.width  = { exact: w };
+          cons.video.height = { exact: h };
+          // Help devices that require matched AR
+          cons.video.aspectRatio = { exact: +(w/h).toFixed(6) };
+          const s = await navigator.mediaDevices.getUserMedia(cons);
+          return s;
+        } catch (e) {
+          // continue to next size
+        }
+      }
+      return null;
+    }
+
+    // NEW: force ≥4K min (16:9 in chosen orientation)
+    async function tryMin4K(base, orient) {
+      const tryMin = async (wmin, hmin) => {
+        const cons = JSON.parse(JSON.stringify(base));
+        cons.video.width  = { min: wmin, ideal: 8000 };
+        cons.video.height = { min: hmin, ideal: 8000 };
+        cons.video.aspectRatio = { exact: +(wmin/hmin).toFixed(6) }; // lock 16:9 / 9:16
+        return await navigator.mediaDevices.getUserMedia(cons);
+      };
+      try {
+        if (orient === 'landscape') return await tryMin(3840, 2160);
+        if (orient === 'portrait')  return await tryMin(2160, 3840);
+        // auto: try landscape then portrait
+        return await tryMin(3840,2160).catch(async () => await tryMin(2160,3840));
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function startStream() {
+      stopStream();
+      logStatus('requesting permission…');
+
+      const base   = buildBaseConstraints();
+      const want4k = $("try4k").value === '1';
+      const force4k = $("force4k").value === '1';
+      const orient = $("orientation").value;
+
+      let s = null;
+      try { await enumerateCameras(); } catch {}
+
+      if (force4k) {
+        s = await tryMin4K(base, orient);
+        if (!s) {
+          alert('4K minimum not available for this camera/orientation. Disable "Force ≥4K minimum" or switch device.');
+          logStatus('failed');
+          return;
+        }
+      } else if (want4k) {
+        // If user wants explicit hi-res, try exact lists first to avoid flicker
+        const L = candidateResolutionsLandscape;
+        const P = getPortraitList();
+        if (orient === 'landscape') {
+          s = await tryExactSizes(L, base);
+        } else if (orient === 'portrait') {
+          s = await tryExactSizes(P, base);
+        } else {
+          // auto: try both
+          s = await tryExactSizes(L, base) || await tryExactSizes(P, base);
+        }
+      }
+
+      // Fallback: high "ideal"
+      if (!s) {
+        try { s = await navigator.mediaDevices.getUserMedia(base); }
+        catch (e) {
+          alert('Could not open camera. Check permissions and HTTPS.');
+          logStatus('failed');
+          return;
+        }
+      }
+
+      // Bind stream
+      stream = s;
+      track = stream.getVideoTracks()[0];
+
+      const v = $("video");
+      v.srcObject = stream;
+      try { await v.play(); } catch {}
+
+      // Prefer detail over motion
+      try { track.contentHint = 'detail'; } catch {}
+
+      // ImageCapture (best effort)
+      try { imageCapture = new ImageCapture(track); } catch { imageCapture = null; }
+
+      // Set UI device label/selection
+      const settings = track.getSettings?.() || {};
+      $("devLabel").textContent = track.label || 'Active camera';
+      if (settings.deviceId) {
+        const sel = $("deviceSelect");
+        for (const opt of sel.options) if (opt.value === settings.deviceId) { sel.value = opt.value; break; }
+      }
+
+      // If forced 4K, verify UA honored it
+      if (force4k) {
+        const minW = (orient === 'portrait') ? 2160 : 3840;
+        const minH = (orient === 'portrait') ? 3840 : 2160;
+        if (!settings.width || !settings.height || settings.width < minW || settings.height < minH) {
+          stopStream();
+          alert(`Stream opened below 4K (${settings.width} x ${settings.height}). Browser/device may ignore min constraints. Try another camera or disable "Force ≥4K".`);
+          logStatus('failed');
+          return;
+        }
+      }
+
+      // Render capabilities UI
+      renderCapabilities();
+
+      // FPS measurement (true camera fps when supported)
+      measureFps();
+
+      // Update settings text
+      updateSettingsUI();
+
+      logStatus('streaming');
+    }
+
+    function updateSettingsUI() {
+      const s = track?.getSettings?.();
+      if (!s) return;
+      const list = [
+        s.width && s.height ? `res ${s.width}x${s.height}` : null,
+        s.frameRate ? `${s.frameRate.toFixed ? s.frameRate.toFixed(1) : s.frameRate} fps` : null,
+        s.facingMode ? `facing ${s.facingMode}` : null,
+        s.zoom != null ? `zoom ${s.zoom}` : null,
+      ].filter(Boolean).join(' · ');
+      $("settings").textContent = list || '—';
+      setTimeout(updateSettingsUI, 1000);
+    }
+
+    function measureFps() {
+      const v = $("video");
+      if ('requestVideoFrameCallback' in v) {
+        let lastT = 0, frames = 0;
+        const tick = (now, meta) => {
+          rVFCActive = true;
+          frames++;
+          if (lastT === 0) lastT = meta.mediaTime;
+          const dt = meta.mediaTime - lastT;
+          if (dt >= 1) {
+            $("liveFps").textContent = (frames / dt).toFixed(1);
+            frames = 0; lastT = meta.mediaTime;
+          }
+          v.requestVideoFrameCallback(tick);
+          if (usingCanvasEnhance) drawEnhanced();
+        };
+        v.requestVideoFrameCallback(tick);
+      } else {
+        // fallback to RAF
+        let last = performance.now(), frames = 0;
+        const step = () => {
+          frames++;
+          const now = performance.now();
+          if (now - last >= 1000) {
+            $("liveFps").textContent = frames.toString();
+            frames = 0; last = now;
+          }
+          rafId = requestAnimationFrame(step);
+          if (usingCanvasEnhance) drawEnhanced();
+        };
+        rafId = requestAnimationFrame(step);
+      }
+    }
+
+    function renderCapabilities() {
+      const caps = track?.getCapabilities?.();
+      const box = $("capabilities");
+      box.innerHTML = '';
+      if (!caps) { box.textContent = 'No advanced capabilities exposed by this browser/device.'; return; }
+
+      const knob = (name, pretty, step=0.01, labelFormatter = (v)=>v) => {
+        if (caps[name] == null) return;
+        const range = caps[name];
+        if (typeof range !== 'object' || !('min' in range) || !('max' in range)) return;
+        const min = range.min, max = range.max;
+        const val = track.getSettings?.()[name] ?? min;
+        const wrap = document.createElement('div');
+        wrap.className = 'slider';
+        wrap.innerHTML = `<label>${pretty} (${min}..${max})</label>
+          <input type="range" data-key="${name}" min="${min}" max="${max}" step="${range.step || step}" value="${val}">
+          <span class="mono" id="val-${name}">${labelFormatter(val)}</span>`;
+        wrap.querySelector('input').addEventListener('input', async (e) => {
+          let v = parseFloat(e.target.value);
+          v = clampToCaps(name, v);
+          await applyAdvanced({ [name]: v });
+          $("val-"+name).textContent = labelFormatter(v);
+        });
+        box.appendChild(wrap);
+      };
+
+      const secsFmt = v => {
+        // Some browsers expose exposureTime in seconds, others in ms. Show with units guess.
+        const unit = (caps.exposureTime?.max > 50) ? 'ms' : 's';
+        const val = (unit === 'ms') ? Math.round(v) : v.toFixed(4);
+        return `${val}${unit}`;
+      };
+
+      knob('zoom', 'Zoom', 0.01);
+      knob('exposureCompensation', 'Exposure Compensation', 0.1);
+      knob('exposureTime', 'Exposure Time', 0.001, secsFmt);
+      knob('iso', 'ISO', 1);
+      knob('focusDistance', 'Focus Distance', 0.01);
+      knob('colorTemperature', 'Color Temperature (K)', 10);
+      knob('brightness', 'Brightness', 1);
+      knob('contrast', 'Contrast', 1);
+      knob('saturation', 'Saturation', 1);
+      knob('sharpness', 'Sharpness', 1);
+
+      const addMode = (key, pretty, values) => {
+        if (!caps[key] || !Array.isArray(caps[key])) return;
+        const current = track.getSettings?.()[key];
+        const div = document.createElement('div'); div.className = 'row';
+        const sel = document.createElement('select');
+        values.forEach(v => { if (caps[key].includes(v)) { const o = document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o);} });
+        if (current) sel.value = current;
+        const label = document.createElement('label'); label.textContent = pretty; label.style.width='130px';
+        div.appendChild(label); div.appendChild(sel);
+        sel.addEventListener('change', async () => { const obj = {}; obj[key] = sel.value; await applyAdvanced(obj); });
+        box.appendChild(div);
+      };
+
+      addMode('exposureMode', 'Exposure Mode', ['continuous','manual']);
+      addMode('focusMode', 'Focus Mode', ['continuous','single-shot','manual']);
+      addMode('whiteBalanceMode', 'WB Mode', ['continuous','manual']);
+
+      if (caps.torch) {
+        const p = document.createElement('div'); p.className='kv';
+        p.innerHTML = `<span>Torch:</span><span class="mono">supported</span>`;
+        box.appendChild(p);
+      }
+    }
+
+    function clampToCaps(key, v) {
+      const r = track?.getCapabilities?.()[key];
+      if (!r || typeof r.min !== 'number' || typeof r.max !== 'number') return v;
+      const step = r.step || 0;
+      let out = Math.max(r.min, Math.min(r.max, v));
+      if (step) out = Math.round(out / step) * step;
+      return out;
+    }
+
+    async function applyAdvanced(obj) {
+      if (!track) return;
+      const clamped = {};
+      for (const k in obj) clamped[k] = clampToCaps(k, obj[k]);
+      try {
+        await track.applyConstraints({ advanced: [clamped] });
+      } catch (e) {
+        console.warn('applyConstraints failed', clamped, e);
+      }
+    }
+
+    async function lockAEAF() {
+      if (!track) return;
+      const s = track.getSettings?.();
+      const caps = track.getCapabilities?.() || {};
+      const adv = {};
+      if (caps.focusMode && caps.focusMode.includes('manual') && s.focusDistance != null) {
+        adv.focusMode = 'manual'; adv.focusDistance = s.focusDistance;
+      }
+      if (caps.exposureMode && caps.exposureMode.includes('manual')) {
+        adv.exposureMode = 'manual';
+        if (s.exposureTime != null) adv.exposureTime = s.exposureTime;
+        if (s.exposureCompensation != null) adv.exposureCompensation = s.exposureCompensation;
+        if (s.iso != null) adv.iso = s.iso;
+      }
+      if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('manual')) {
+        adv.whiteBalanceMode = 'manual';
+        if (s.colorTemperature != null) adv.colorTemperature = s.colorTemperature;
+      }
+      await applyAdvanced(adv);
+    }
+
+    async function toggleTorch() {
+      const caps = track?.getCapabilities?.();
+      if (!caps || !caps.torch) return alert('Torch not supported on this device');
+      const current = track.getSettings?.().torch || false;
+      await applyAdvanced({ torch: !current });
+    }
+
+    // ===== Software enhancement (preview only) =====
+    const vEl = $("video");
+    const cEl = $("canvas");
+    const ctx = cEl.getContext('2d', { willReadFrequently: true });
+
+    function setEnhanceEnabled() {
+      const g = parseFloat($("gamma").value);
+      const k = parseInt($("contrast").value,10);
+      const sh = parseInt($("sharpen").value,10);
+      usingCanvasEnhance = (g !== 1 || k !== 0 || sh !== 0);
+      cEl.style.display = usingCanvasEnhance ? 'block' : 'none';
+      vEl.style.display = usingCanvasEnhance ? 'none' : 'block';
+    }
+
+    function drawEnhanced() {
+      if (!stream) return;
+      const w = vEl.videoWidth, h = vEl.videoHeight;
+      if (!w || !h) return;
+      if (cEl.width !== w) { cEl.width = w; cEl.height = h; }
+      ctx.drawImage(vEl, 0, 0, w, h);
+      let img = ctx.getImageData(0,0,w,h);
+      const data = img.data;
+
+      const gamma = parseFloat($("gamma").value);
+      const contrast = parseInt($("contrast").value,10);
+      const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+      for (let i=0; i<data.length; i+=4) {
+        let y = 0.2126*data[i] + 0.7152*data[i+1] + 0.0722*data[i+2];
+        y = 255 * Math.pow(Math.max(0, y/255), 1/gamma);
+        y = factor * (y - 128) + 128;
+        data[i] = data[i+1] = data[i+2] = y;
+      }
+
+      if (parseInt($("sharpen").value,10) > 0) {
+        const tmp = new Uint8ClampedArray(data);
+        const k = [0,-1,0,-1,5,-1,0,-1,0];
+        for (let y=1; y<h-1; y++) {
+          for (let x=1; x<w-1; x++) {
+            let acc=0, idx=(y*w+x)*4, n=0;
+            for (let j=-1;j<=1;j++) for (let i=-1;i<=1;i++) {
+              const ii = ((y+j)*w + (x+i))*4;
+              acc += tmp[ii]*k[n++]; // grayscale, so R channel is enough
+            }
+            const v = Math.max(0, Math.min(255, acc));
+            data[idx]=data[idx+1]=data[idx+2]=v;
+          }
+        }
+      }
+
+      ctx.putImageData(img,0,0);
+    }
+
+    // ===== Snap & Record =====
+    async function snapFrame() {
+      // Prefer sensor stills
+      if (imageCapture?.takePhoto) {
+        try {
+          const caps = track?.getCapabilities?.() || {};
+          const photo = await imageCapture.takePhoto({
+            imageWidth:  caps.width?.max,
+            imageHeight: caps.height?.max
+            // fillLightMode: 'flash' // optional on some devices
+          });
+          revokeDownloadUrl();
+          downloadUrl = URL.createObjectURL(photo);
+          const a = $("downloadLink");
+          a.href = downloadUrl; a.download = `photo_${Date.now()}.jpg`; a.style.display = 'inline-block';
+          return;
+        } catch (e) { console.warn('takePhoto failed; falling back', e); }
+      }
+      // Fallback: frame grab from current view (enhanced if enabled)
+      try {
+        const src = usingCanvasEnhance ? cEl : vEl;
+        const w = src.videoWidth || src.width, h = src.videoHeight || src.height;
+        const cc = document.createElement('canvas'); cc.width = w; cc.height = h;
+        const cctx = cc.getContext('2d'); cctx.drawImage(src, 0, 0, w, h);
+        const blob = await new Promise(res => cc.toBlob(res, 'image/png'));
+        revokeDownloadUrl();
+        downloadUrl = URL.createObjectURL(blob);
+        const a = $("downloadLink");
+        a.href = downloadUrl; a.download = `frame_${Date.now()}.png`; a.style.display = 'inline-block';
+      } catch (e) {
+        alert('Snapshot failed (likely memory). Try a lower resolution.'); console.error(e);
+      }
+    }
+
+    function getRecorderStream() {
+      if ($("recordSource").value === 'enhanced') {
+        // Cap canvas capture FPS to reduce memory spikes
+        const fps = Math.min(30, Math.max(15, Math.round(track?.getSettings?.().frameRate || 30)));
+        return cEl.captureStream(fps);
+      }
+      return stream;
+    }
+
+    function pickMimeType() {
+      const mimeTypes = [
+        'video/mp4;codecs=avc1.42E01E', // Safari first
+        'video/mp4',
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm'
+      ];
+      for (const m of mimeTypes) {
+        try { if (MediaRecorder.isTypeSupported(m)) return m; } catch {}
+      }
+      return ''; // let browser decide
+    }
+
+    function toggleRecord() {
+      if (!stream) return;
+      if (recorder && recorder.state !== 'inactive') {
+        // stop safely
+        try { recorder.stop(); } catch {}
+        $("rec").textContent = 'Start recording';
+        logStatus('stopping recording…');
+        return;
+      }
+      // (Re)set buffer
+      recBlobs = [];
+      revokeDownloadUrl();
+      const srcStream = getRecorderStream();
+      let options = {};
+      const mt = pickMimeType();
+      if (mt) options.mimeType = mt;
+
+      try {
+        recorder = new MediaRecorder(srcStream, options);
+      } catch (e) {
+        alert('MediaRecorder not supported for this configuration. Try switching Record source or browser.');
+        console.error(e);
+        return;
+      }
+
+      recorder.ondataavailable = e => { if (e.data && e.data.size) recBlobs.push(e.data); };
+      recorder.onstop = () => {
+        try {
+          const blob = new Blob(recBlobs, { type: recorder.mimeType || (isSafari ? 'video/mp4' : 'video/webm') });
+          recBlobs = []; // free memory
+          revokeDownloadUrl();
+          downloadUrl = URL.createObjectURL(blob);
+          const a = $("downloadLink");
+          a.href = downloadUrl;
+          a.download = `capture_${Date.now()}.${(blob.type.includes('mp4') ? 'mp4' : 'webm')}`;
+          a.style.display = 'inline-block';
+          logStatus('recording saved');
+        } catch (e) {
+          alert('Finalizing video failed. Try a shorter or lower-res capture.'); console.error(e);
+        }
+      };
+      recorder.onerror = (e) => { console.error('Recorder error', e); alert('Recorder error: ' + e.message); };
+
+      // start with 1s timeslices to reduce memory spikes
+      try { recorder.start(1000); } catch { recorder.start(); }
+      $("rec").textContent = 'Stop recording';
+      logStatus('recording…');
+    }
+
+    // ===== Event wiring =====
+    $("start").addEventListener('click', startStream);
+    $("stop").addEventListener('click', stopStream);
+    $("lockAEAF").addEventListener('click', lockAEAF);
+    $("torch").addEventListener('click', toggleTorch);
+
+    $("deviceSelect").addEventListener('change', async (e) => {
+      const deviceId = e.target.value;
+      if (!deviceId) return;
+      stopStream();
+      const base = buildBaseConstraints();
+      base.video.deviceId = { exact: deviceId };
+      try { stream = await navigator.mediaDevices.getUserMedia(base); } catch (e) {
+        alert('Failed to switch camera: '+ e.message); return;
+      }
+      track = stream.getVideoTracks()[0];
+      $("video").srcObject = stream; try { await $("video").play(); } catch {}
+      try { track.contentHint = 'detail'; } catch {}
+      try { imageCapture = new ImageCapture(track); } catch {}
+      renderCapabilities(); measureFps(); updateSettingsUI();
+    });
+
+    // Enhance preview sliders
+    ["gamma","contrast","sharpen"].forEach(id => {
+      $(id).addEventListener('input', () => {
+        $(id+"Val").textContent = $(id).value;
+        setEnhanceEnabled();
+      });
+    });
+
+    $("snap").addEventListener('click', snapFrame);
+    $("rec").addEventListener('click', toggleRecord);
+
+    // On load
+    (async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        alert('getUserMedia not supported in this browser');
+        return;
+      }
+      try { await enumerateCameras(); } catch {}
+    })();
+  </script>
+</body>
+</html>
